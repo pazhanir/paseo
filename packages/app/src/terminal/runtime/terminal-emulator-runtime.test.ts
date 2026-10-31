@@ -1,83 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@xterm/addon-clipboard", () => ({
-  ClipboardAddon: class ClipboardAddon {
-    dispose(): void {}
-  },
-}));
-
-vi.mock("@xterm/addon-fit", () => ({
-  FitAddon: class FitAddon {
-    dispose(): void {}
-  },
-}));
-
-vi.mock("@xterm/addon-image", () => ({
-  ImageAddon: class ImageAddon {
-    dispose(): void {}
-  },
-}));
-
-vi.mock("@xterm/addon-ligatures/lib/addon-ligatures.mjs", () => ({
-  LigaturesAddon: class LigaturesAddon {
-    dispose(): void {}
-  },
-}));
-
-vi.mock("@xterm/addon-search", () => ({
-  SearchAddon: class SearchAddon {
-    dispose(): void {}
-  },
-}));
-
-vi.mock("@xterm/addon-unicode11", () => ({
-  Unicode11Addon: class Unicode11Addon {
-    dispose(): void {}
-  },
-}));
-
-vi.mock("@xterm/addon-web-links", () => ({
-  WebLinksAddon: class WebLinksAddon {
-    dispose(): void {}
-  },
-}));
-
-vi.mock("@xterm/addon-webgl", () => ({
-  WebglAddon: class WebglAddon {
-    onContextLoss(): void {}
-    dispose(): void {}
-  },
-}));
-
-const terminalConstructorOptions = vi.hoisted(() => ({
-  values: [] as unknown[],
-}));
-
-vi.mock("@xterm/xterm", () => ({
-  Terminal: class Terminal {
-    rows = 24;
-    cols = 80;
-    unicode = { activeVersion: "" };
-    parser = {
-      registerCsiHandler: () => undefined,
-    };
-    constructor(options: unknown) {
-      terminalConstructorOptions.values.push(options);
-    }
-    loadAddon(): void {}
-    registerLinkProvider(): { dispose: () => void } {
-      return { dispose: () => undefined };
-    }
-    open(): void {}
-    onData(): { dispose: () => void } {
-      return { dispose: () => undefined };
-    }
-    attachCustomKeyEventHandler(): void {}
-    dispose(): void {}
-    refresh(): void {}
-  },
-}));
-
 import {
   createTerminalResizeEvent,
   encodeTerminalOutput,
@@ -184,7 +106,6 @@ describe("terminal-emulator-runtime", () => {
     (globalThis as { window?: { __paseoTerminal?: unknown } }).window = {
       __paseoTerminal: undefined,
     };
-    terminalConstructorOptions.values = [];
   });
 
   afterEach(() => {

@@ -446,15 +446,21 @@ export default function TerminalEmulator({
       },
     });
     runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
-    runtime.mount({
-      root,
-      host,
-      scrollback: scrollbackLinesRef.current,
-      theme: mountedThemeRef.current,
-      fontFamily: fontFamilyRef.current,
-      fontSize: fontSizeRef.current,
-    });
-    onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
+    void runtime
+      .mount({
+        root,
+        host,
+        scrollback: scrollbackLinesRef.current,
+        theme: mountedThemeRef.current,
+        fontFamily: fontFamilyRef.current,
+        fontSize: fontSizeRef.current,
+      })
+      .then(() => {
+        if (runtimeRef.current === runtime) {
+          onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
+        }
+        return undefined;
+      });
 
     return () => {
       runtime.unmount();

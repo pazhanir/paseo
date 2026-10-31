@@ -1,11 +1,4 @@
-import {
-  FitAddon,
-  init,
-  OSC8LinkProvider,
-  Terminal,
-  UrlRegexProvider,
-  type ITheme,
-} from "ghostty-web";
+import { FitAddon, init, Terminal, type ILink, type ILinkProvider, type ITheme } from "ghostty-web";
 import {
   type TerminalInputModeState,
   TerminalInputModeTracker,
@@ -175,6 +168,74 @@ function prependTerminalOutput(
 
 function withOverviewRulerBorderHidden(theme: ITheme): ITheme {
   return theme;
+}
+
+function createExternalLinkProviders(
+  terminal: Terminal,
+  onOpenExternalUrl: (url: string) => Promise<void> | void,
+): ILinkProvider[] {
+  const urlProvider: ILinkProvider = {
+    provideLinks: (row, callback) => {
+      const line = terminal.buffer.active.getLine(row);
+      const text = line?.translateToString(true) ?? "";
+      const links: ILink[] = [];
+      const pattern = /(?:https?|ftp|ssh|git):\/\/[^\s<>"'`]+/g;
+      for (const match of text.matchAll(pattern)) {
+        const url = match[0];
+        const start = match.index ?? 0;
+        links.push({
+          text: url,
+          range: {
+            start: { x: start, y: row },
+            end: { x: start + url.length, y: row },
+          },
+          activate: (event) => {
+            event.preventDefault();
+            void onOpenExternalUrl(url);
+          },
+        });
+      }
+      callback(links.length > 0 ? links : undefined);
+    },
+  };
+
+  const osc8Provider: ILinkProvider = {
+    provideLinks: (row, callback) => {
+      const line = terminal.buffer.active.getLine(row);
+      const links: ILink[] = [];
+      let column = 0;
+      if (!line) {
+        callback(undefined);
+        return;
+      }
+      while (column < line.length) {
+        const cell = line.getCell(column);
+        const hyperlinkId = cell?.getHyperlinkId() ?? 0;
+        if (hyperlinkId === 0) {
+          column += 1;
+          continue;
+        }
+        const start = column;
+        while (column < line.length && line.getCell(column)?.getHyperlinkId() === hyperlinkId) {
+          column += 1;
+        }
+        const url = terminal.wasmTerm?.getHyperlinkUri(hyperlinkId);
+        if (url) {
+          links.push({
+            text: line.translateToString(true).slice(start, column),
+            range: { start: { x: start, y: row }, end: { x: column, y: row } },
+            activate: (event) => {
+              event.preventDefault();
+              void onOpenExternalUrl(url);
+            },
+          });
+        }
+      }
+      callback(links.length > 0 ? links : undefined);
+    },
+  };
+
+  return [urlProvider, osc8Provider];
 }
 
 export interface TerminalClipboard {
@@ -437,16 +498,12 @@ export class TerminalEmulatorRuntime {
     }
 
     const current = this.findResult.resultIndex;
-    const nextIndex =
-      direction === "previous"
-        ? current <= 0
-          ? matches.length - 1
-          : current - 1
-        : direction === "next"
-          ? current < 0 || current >= matches.length - 1
-            ? 0
-            : current + 1
-          : matches.length - 1;
+    let nextIndex = matches.length - 1;
+    if (direction === "previous") {
+      nextIndex = current <= 0 ? matches.length - 1 : current - 1;
+    } else if (direction === "next") {
+      nextIndex = current < 0 || current >= matches.length - 1 ? 0 : current + 1;
+    }
     const match = matches[nextIndex];
     terminal.select(match.x, match.y, query.length);
     terminal.scrollToLine(Math.max(0, match.y - terminal.rows + 1));
@@ -460,7 +517,7 @@ export class TerminalEmulatorRuntime {
     if (!this.findQuery) return false;
     const terminal = this.terminal;
     const element = terminal?.element;
-    const screen = element?.querySelector(".xterm-screen");
+    const screen = element?.querySelector("canvas");
     const selection = terminal?.getSelectionPosition();
     if (!terminal || !element || !screen || !selection) return false;
     const root = element.getBoundingClientRect();
@@ -513,19 +570,16 @@ export class TerminalEmulatorRuntime {
     return true;
   }
 
-  mount(input: TerminalEmulatorRuntimeMountInput): void {
+  async mount(input: TerminalEmulatorRuntimeMountInput): Promise<void> {
     const generation = ++this.mountGeneration;
     this.unmount();
     this.mountGeneration = generation;
-    void this.ghosttyReady.then(() => {
-      if (generation !== this.mountGeneration) return;
-      this.mountInitialized(input);
-    });
+    await this.ghosttyReady;
+    if (generation !== this.mountGeneration) return;
+    this.mountInitialized(input);
   }
 
   private mountInitialized(input: TerminalEmulatorRuntimeMountInput): void {
-    this.unmount();
-
     input.host.innerHTML = "";
     this.lastSize = null;
     this.inputModeTracker.reset();
@@ -542,8 +596,11 @@ export class TerminalEmulatorRuntime {
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    terminal.registerLinkProvider(new UrlRegexProvider(terminal));
-    terminal.registerLinkProvider(new OSC8LinkProvider(terminal));
+    for (const provider of createExternalLinkProviders(terminal, (url) =>
+      this.callbacks.onOpenExternalUrl?.(url),
+    )) {
+      terminal.registerLinkProvider(provider);
+    }
     const localFileLinkProvider = createTerminalLocalFileLinkProvider(terminal, {
       resolveLink: async (source) => {
         const target = await this.callbacks.onResolveLocalFileLink?.(source);
@@ -933,9 +990,7 @@ export class TerminalEmulatorRuntime {
     return [
       input.root,
       input.host,
-      ...Array.from(
-        input.host.querySelectorAll<HTMLElement>(".xterm, .xterm-screen, .xterm-viewport"),
-      ),
+      ...Array.from(input.host.querySelectorAll<HTMLElement>("canvas")),
     ];
   }
 
@@ -1256,7 +1311,7 @@ export class TerminalEmulatorRuntime {
   }
 
   private applyViewportTouchStyles(input: { host: HTMLDivElement }): () => void {
-    const viewportElement = input.host.querySelector<HTMLElement>(".xterm-viewport");
+    const viewportElement = input.host;
 
     const previousViewportOverscroll = viewportElement?.style.overscrollBehavior ?? "";
     const previousViewportTouchAction = viewportElement?.style.touchAction ?? "";
@@ -1295,9 +1350,9 @@ export class TerminalEmulatorRuntime {
     terminal: Terminal;
   }): () => void {
     let touchScrollRemainderPx = 0;
-    const measuredLineHeight =
-      input.host.querySelector<HTMLElement>(".xterm-rows > div")?.getBoundingClientRect().height ??
-      0;
+    const measuredLineHeight = input.terminal.element
+      ? input.terminal.element.getBoundingClientRect().height / input.terminal.rows
+      : 0;
     const touchScrollLineHeightPx =
       measuredLineHeight > 0 ? measuredLineHeight : DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX;
 

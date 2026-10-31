@@ -9,7 +9,7 @@ describe("createTerminalLocalFileLinkProvider", () => {
     const openLink = vi.fn();
     const provider = createTerminalLocalFileLinkProvider(terminal, { resolveLink, openLink });
 
-    const links = await provideLinks(provider, 1);
+    const links = await provideLinks(provider, 0);
 
     expect(resolveLink).toHaveBeenCalledWith({
       text: "file.ts:42",
@@ -27,11 +27,11 @@ describe("createTerminalLocalFileLinkProvider", () => {
       openLink: vi.fn(),
     });
 
-    const [link] = (await provideLinks(provider, 1)) ?? [];
+    const [link] = (await provideLinks(provider, 0)) ?? [];
 
     expect(link?.range).toEqual({
-      start: { x: 6, y: 1 },
-      end: { x: 16, y: 1 },
+      start: { x: 5, y: 0 },
+      end: { x: 16, y: 0 },
     });
   });
 
@@ -44,7 +44,7 @@ describe("createTerminalLocalFileLinkProvider", () => {
       openLink,
     });
 
-    const [link] = (await provideLinks(provider, 1)) ?? [];
+    const [link] = (await provideLinks(provider, 0)) ?? [];
     link?.activate({ preventDefault: vi.fn(), ctrlKey: true } as unknown as MouseEvent);
 
     expect(openLink).toHaveBeenCalledWith(target, "side", expect.anything());
@@ -57,7 +57,7 @@ describe("createTerminalLocalFileLinkProvider", () => {
       openLink: vi.fn(),
     });
 
-    await expect(provideLinks(provider, 1)).resolves.toBeUndefined();
+    await expect(provideLinks(provider, 0)).resolves.toBeUndefined();
   });
 });
 

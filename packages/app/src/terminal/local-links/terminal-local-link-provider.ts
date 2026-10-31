@@ -69,7 +69,7 @@ class TerminalLocalFileLinkProvider implements ILinkProvider {
   }
 
   private async provideLinksForLine(bufferLineNumber: number): Promise<ILink[]> {
-    const windowed = getWindowedLineContent(this.terminal, bufferLineNumber - 1);
+    const windowed = getWindowedLineContent(this.terminal, bufferLineNumber);
     if (!windowed || windowed.text.length === 0 || windowed.text.length > MAX_LINE_LENGTH) {
       return [];
     }
@@ -262,8 +262,8 @@ function toBufferRange(input: {
   }
 
   return {
-    start: { x: start.x + 1, y: start.y + 1 },
-    end: { x: end.x, y: end.y + 1 },
+    start,
+    end,
   };
 }
 
