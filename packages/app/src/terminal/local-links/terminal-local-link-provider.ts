@@ -3,7 +3,7 @@
  * Copyright (c) Microsoft Corporation.
  */
 
-import type { IBufferCell, IBufferRange, ILink, ILinkProvider, Terminal } from "@xterm/xterm";
+import type { IBufferRange, ILink, ILinkProvider, Terminal } from "ghostty-web";
 import {
   detectTerminalLocalLinks,
   type TerminalLinkSuffix,
@@ -69,7 +69,7 @@ class TerminalLocalFileLinkProvider implements ILinkProvider {
   }
 
   private async provideLinksForLine(bufferLineNumber: number): Promise<ILink[]> {
-    const windowed = getWindowedLineContent(this.terminal, bufferLineNumber - 1);
+    const windowed = getWindowedLineContent(this.terminal, bufferLineNumber);
     if (!windowed || windowed.text.length === 0 || windowed.text.length > MAX_LINE_LENGTH) {
       return [];
     }
@@ -122,10 +122,6 @@ function createLocalFileLink(input: {
   return {
     range: input.range,
     text: input.source.text,
-    decorations: {
-      pointerCursor: true,
-      underline: true,
-    },
     activate: (event) => {
       event.preventDefault();
       const disposition = event.metaKey || event.ctrlKey ? "side" : "main";
@@ -266,8 +262,8 @@ function toBufferRange(input: {
   }
 
   return {
-    start: { x: start.x + 1, y: start.y + 1 },
-    end: { x: end.x, y: end.y + 1 },
+    start,
+    end,
   };
 }
 
@@ -277,7 +273,6 @@ function mapStringOffsetToBuffer(
   offset: number,
 ): { y: number; x: number } | null {
   const buffer = terminal.buffer.active;
-  const cell = buffer.getNullCell();
   let y = startLine;
   let charsRemaining = offset;
 
@@ -290,7 +285,7 @@ function mapStringOffsetToBuffer(
       if (charsRemaining <= 0) {
         return { y, x: column };
       }
-      const currentCell = line.getCell(column, cell) as IBufferCell | undefined;
+      const currentCell = line.getCell(column);
       const chars = currentCell?.getChars() ?? "";
       const width = currentCell?.getWidth() ?? 0;
       if (width) {
@@ -298,7 +293,6 @@ function mapStringOffsetToBuffer(
         if (
           isWrappedWideCharacterContinuation({
             buffer,
-            cell,
             lineLength: line.length,
             column,
             y,
@@ -321,7 +315,6 @@ function mapStringOffsetToBuffer(
 
 function isWrappedWideCharacterContinuation(input: {
   buffer: Terminal["buffer"]["active"];
-  cell: IBufferCell;
   lineLength: number;
   column: number;
   y: number;
@@ -331,6 +324,6 @@ function isWrappedWideCharacterContinuation(input: {
     return false;
   }
   const nextLine = input.buffer.getLine(input.y + 1);
-  const nextCell = nextLine?.getCell(0, input.cell);
+  const nextCell = nextLine?.getCell(0);
   return Boolean(nextLine?.isWrapped && nextCell?.getWidth() === 2);
 }

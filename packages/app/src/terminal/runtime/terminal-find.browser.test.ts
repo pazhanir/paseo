@@ -1,4 +1,3 @@
-import "@xterm/xterm/css/xterm.css";
 import { afterEach, expect, test } from "vitest";
 import {
   TerminalEmulatorRuntime,
@@ -42,7 +41,7 @@ function write(text: string) {
   );
 }
 
-test("uses xterm's literal matching across wrapped cells and keeps selection when Find closes", async () => {
+test("uses literal matching across wrapped cells and keeps selection when Find closes", async () => {
   const results = mount();
   // Initial font measurement schedules refits through 2 seconds. Settle them
   // before choosing an exact column boundary for the wrapped text fixture.
@@ -122,9 +121,9 @@ test("closing Find cancels pending refreshes without clearing old or new selecti
   for (const freshSelection of [false, true]) {
     runtime.find.search("needle");
     await write("\r\nnew output");
-    // onWriteParsed schedules the addon's refresh after the write callback.
+    // Wait for a renderer pass after queued output.
     await new Promise<void>((resolve) => {
-      const subscription = term.onWriteParsed(() => {
+      const subscription = term.onRender(() => {
         subscription.dispose();
         resolve();
       });
@@ -139,7 +138,7 @@ test("closing Find cancels pending refreshes without clearing old or new selecti
   }
 });
 
-test("preserves inspection through multiple real parser turns of queued output", async () => {
+test("preserves inspection through multiple renderer passes of queued output", async () => {
   mount();
   await new Promise((resolve) => setTimeout(resolve, 2600));
   await write("padding\r\n".repeat(30) + "needle\r\nprogress");
@@ -147,7 +146,7 @@ test("preserves inspection through multiple real parser turns of queued output",
   const term = window.__paseoTerminal!;
   const inspected = term.buffer.active.viewportY;
   const samples: { viewport: number; base: number }[] = [];
-  const subscription = term.onWriteParsed(() => {
+  const subscription = term.onRender(() => {
     samples.push({ viewport: term.buffer.active.viewportY, base: term.buffer.active.baseY });
   });
   for (let i = 0; i < 150; i++) {
@@ -163,7 +162,7 @@ test("preserves inspection through multiple real parser turns of queued output",
   expect(term.getSelection()).toBe("needle");
 });
 
-test.each([true, false])("routes Find and shell input through xterm with isMac=%s", (isMac) => {
+test.each([true, false])("routes Find and shell input with isMac=%s", (isMac) => {
   mount({ isMac });
   const input: string[] = [];
   let findRequests = 0;

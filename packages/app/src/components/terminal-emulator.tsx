@@ -17,8 +17,7 @@ import {
 } from "react";
 import type { DOMProps } from "expo/dom";
 import { useDOMImperativeHandle, type DOMImperativeFactory } from "expo/dom";
-import "@xterm/xterm/css/xterm.css";
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme } from "ghostty-web";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import {
@@ -447,15 +446,21 @@ export default function TerminalEmulator({
       },
     });
     runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
-    runtime.mount({
-      root,
-      host,
-      scrollback: scrollbackLinesRef.current,
-      theme: mountedThemeRef.current,
-      fontFamily: fontFamilyRef.current,
-      fontSize: fontSizeRef.current,
-    });
-    onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
+    void runtime
+      .mount({
+        root,
+        host,
+        scrollback: scrollbackLinesRef.current,
+        theme: mountedThemeRef.current,
+        fontFamily: fontFamilyRef.current,
+        fontSize: fontSizeRef.current,
+      })
+      .then(() => {
+        if (runtimeRef.current === runtime) {
+          onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
+        }
+        return undefined;
+      });
 
     return () => {
       runtime.unmount();

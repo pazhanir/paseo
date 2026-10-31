@@ -121,7 +121,7 @@ export function shouldInterceptDomTerminalKey(args: {
   }
   // COMPAT(xterm-ipad-ctrl-c): WebKit sends keyCode=13 for hardware-kbd Ctrl+C on iPad, so
   // xterm.js emits \r instead of \x03. Upstream: xtermjs/xterm.js#5721, targeting xterm.js 7.0.0.
-  // Drop this block and the isAppleHandheld plumbing once @xterm/xterm is bumped past it.
+  // Keep this compatibility path for browser keyboard layouts that report handheld modifiers.
   if (
     args.isAppleHandheld &&
     args.ctrlKey &&

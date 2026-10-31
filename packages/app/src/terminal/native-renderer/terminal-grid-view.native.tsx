@@ -7,7 +7,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme } from "ghostty-web";
 
 import {
   PaseoTerminalView,

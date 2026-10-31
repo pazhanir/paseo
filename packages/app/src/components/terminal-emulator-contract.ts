@@ -3,7 +3,7 @@ import type {
   TerminalFindResult,
 } from "../terminal/runtime/terminal-emulator-runtime";
 import type { Ref } from "react";
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme } from "ghostty-web";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import type { TerminalOutputData } from "../terminal/runtime/terminal-emulator-runtime";
 import type {

@@ -1,12 +1,4 @@
-import { ClipboardAddon } from "@xterm/addon-clipboard";
-import { FitAddon } from "@xterm/addon-fit";
-import { ImageAddon } from "@xterm/addon-image";
-import { SearchAddon } from "@xterm/addon-search";
-import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { LigaturesAddon } from "@xterm/addon-ligatures/lib/addon-ligatures.mjs";
-import { Terminal, type ITheme, type IMarker } from "@xterm/xterm";
+import { FitAddon, init, Terminal, type ILink, type ILinkProvider, type ITheme } from "ghostty-web";
 import {
   type TerminalInputModeState,
   TerminalInputModeTracker,
@@ -175,10 +167,75 @@ function prependTerminalOutput(
 }
 
 function withOverviewRulerBorderHidden(theme: ITheme): ITheme {
-  return {
-    ...theme,
-    overviewRulerBorder: theme.background ?? "transparent",
+  return theme;
+}
+
+function createExternalLinkProviders(
+  terminal: Terminal,
+  onOpenExternalUrl: (url: string) => Promise<void> | void,
+): ILinkProvider[] {
+  const urlProvider: ILinkProvider = {
+    provideLinks: (row, callback) => {
+      const line = terminal.buffer.active.getLine(row);
+      const text = line?.translateToString(true) ?? "";
+      const links: ILink[] = [];
+      const pattern = /(?:https?|ftp|ssh|git):\/\/[^\s<>"'`]+/g;
+      for (const match of text.matchAll(pattern)) {
+        const url = match[0];
+        const start = match.index ?? 0;
+        links.push({
+          text: url,
+          range: {
+            start: { x: start, y: row },
+            end: { x: start + url.length, y: row },
+          },
+          activate: (event) => {
+            event.preventDefault();
+            void onOpenExternalUrl(url);
+          },
+        });
+      }
+      callback(links.length > 0 ? links : undefined);
+    },
   };
+
+  const osc8Provider: ILinkProvider = {
+    provideLinks: (row, callback) => {
+      const line = terminal.buffer.active.getLine(row);
+      const links: ILink[] = [];
+      let column = 0;
+      if (!line) {
+        callback(undefined);
+        return;
+      }
+      while (column < line.length) {
+        const cell = line.getCell(column);
+        const hyperlinkId = cell?.getHyperlinkId() ?? 0;
+        if (hyperlinkId === 0) {
+          column += 1;
+          continue;
+        }
+        const start = column;
+        while (column < line.length && line.getCell(column)?.getHyperlinkId() === hyperlinkId) {
+          column += 1;
+        }
+        const url = terminal.wasmTerm?.getHyperlinkUri(hyperlinkId);
+        if (url) {
+          links.push({
+            text: line.translateToString(true).slice(start, column),
+            range: { start: { x: start, y: row }, end: { x: column, y: row } },
+            activate: (event) => {
+              event.preventDefault();
+              void onOpenExternalUrl(url);
+            },
+          });
+        }
+      }
+      callback(links.length > 0 ? links : undefined);
+    },
+  };
+
+  return [urlProvider, osc8Provider];
 }
 
 export interface TerminalClipboard {
@@ -235,10 +292,9 @@ export class TerminalEmulatorRuntime {
   };
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
-  private searchAddon: SearchAddon | null = null;
   private findResult = { resultIndex: -1, resultCount: 0 };
   private findQuery = "";
-  private findOutputAnchor: IMarker | undefined;
+  private findOutputAnchor: number | undefined;
   private findWidgetSize = { width: 0, height: 0 };
 
   readonly find: TerminalFindHandle = {
@@ -249,29 +305,12 @@ export class TerminalEmulatorRuntime {
     search: (query, direction) => {
       this.releaseFindOutputAnchor();
       this.findQuery = query;
-      if (this.terminal && !this.searchAddon) this.loadSearchAddon(this.terminal);
-      const theme = this.terminal?.options.theme;
-      const options = {
-        regex: false,
-        caseSensitive: false,
-        incremental: direction === undefined,
-        decorations: {
-          matchBorder: theme?.yellow ?? "#b58900",
-          matchOverviewRuler: theme?.yellow ?? "#b58900",
-          activeMatchBorder: theme?.blue ?? "#268bd2",
-          activeMatchColorOverviewRuler: theme?.blue ?? "#268bd2",
-        },
-      };
-      if (direction === "next") this.searchAddon?.findNext(query, options);
-      else this.searchAddon?.findPrevious(query, options);
+      this.findResult = this.findInBuffer(query, direction);
+      this.emitFindResult();
     },
     clear: () => {
       this.releaseFindOutputAnchor();
       this.findQuery = "";
-      // clearDecorations leaves the addon's pending refresh alive. Disposal
-      // cancels its timers and listeners without touching terminal selection.
-      this.searchAddon?.dispose();
-      this.searchAddon = null;
       this.findResult = { resultIndex: -1, resultCount: 0 };
       this.emitFindResult();
     },
@@ -298,6 +337,8 @@ export class TerminalEmulatorRuntime {
   private readonly inputModeTracker = new TerminalInputModeTracker();
   private lastInputModeState: TerminalInputModeState = this.inputModeTracker.getState();
   private themeBackgroundElements: HTMLElement[] = [];
+  private readonly ghosttyReady = init();
+  private mountGeneration = 0;
 
   private handleVisibilityRestore = (): void => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -320,27 +361,13 @@ export class TerminalEmulatorRuntime {
     this.pendingModifiers = input.pendingModifiers;
   }
 
-  private loadSearchAddon(terminal: Terminal): void {
-    const searchAddon = new SearchAddon({ highlightLimit: FIND_HIGHLIGHT_LIMIT });
-    terminal.loadAddon(searchAddon);
-    this.searchAddon = searchAddon;
-    searchAddon.onDidChangeResults((result) => {
-      this.findResult = result;
-      this.emitFindResult();
-    });
-  }
-
   private releaseFindOutputAnchor(): void {
-    this.findOutputAnchor?.dispose();
     this.findOutputAnchor = undefined;
   }
 
   private preserveFindViewport(terminal: Terminal): void {
     if (!this.findQuery || this.findResult.resultCount === 0 || this.findOutputAnchor) return;
-    const buffer = terminal.buffer.active;
-    this.findOutputAnchor = terminal.registerMarker(
-      buffer.viewportY - buffer.baseY - buffer.cursorY,
-    );
+    this.findOutputAnchor = terminal.buffer.active.viewportY;
   }
 
   attachKeyEventHandler(
@@ -440,11 +467,57 @@ export class TerminalEmulatorRuntime {
     return true;
   }
 
+  private findInBuffer(
+    query: string,
+    direction?: "next" | "previous",
+  ): {
+    resultIndex: number;
+    resultCount: number;
+  } {
+    const terminal = this.terminal;
+    if (!terminal || query.length === 0) {
+      return { resultIndex: -1, resultCount: 0 };
+    }
+
+    const needle = query.toLocaleLowerCase();
+    const matches: Array<{ x: number; y: number }> = [];
+    const buffer = terminal.buffer.active;
+    for (let y = 0; y < buffer.length && matches.length < FIND_HIGHLIGHT_LIMIT; y += 1) {
+      const line = buffer.getLine(y)?.translateToString(false) ?? "";
+      let offset = 0;
+      while (offset <= line.length - query.length) {
+        const index = line.toLocaleLowerCase().indexOf(needle, offset);
+        if (index < 0) break;
+        matches.push({ x: index, y });
+        offset = index + Math.max(query.length, 1);
+      }
+    }
+
+    if (matches.length === 0) {
+      return { resultIndex: -1, resultCount: 0 };
+    }
+
+    const current = this.findResult.resultIndex;
+    let nextIndex = matches.length - 1;
+    if (direction === "previous") {
+      nextIndex = current <= 0 ? matches.length - 1 : current - 1;
+    } else if (direction === "next") {
+      nextIndex = current < 0 || current >= matches.length - 1 ? 0 : current + 1;
+    }
+    const match = matches[nextIndex];
+    terminal.select(match.x, match.y, query.length);
+    terminal.scrollToLine(Math.max(0, match.y - terminal.rows + 1));
+    return {
+      resultIndex: nextIndex,
+      resultCount: matches.length,
+    };
+  }
+
   private findWidgetCoversSelection(): boolean {
     if (!this.findQuery) return false;
     const terminal = this.terminal;
     const element = terminal?.element;
-    const screen = element?.querySelector(".xterm-screen");
+    const screen = element?.querySelector("canvas");
     const selection = terminal?.getSelectionPosition();
     if (!terminal || !element || !screen || !selection) return false;
     const root = element.getBoundingClientRect();
@@ -497,146 +570,58 @@ export class TerminalEmulatorRuntime {
     return true;
   }
 
-  mount(input: TerminalEmulatorRuntimeMountInput): void {
+  async mount(input: TerminalEmulatorRuntimeMountInput): Promise<void> {
+    const generation = ++this.mountGeneration;
     this.unmount();
+    this.mountGeneration = generation;
+    await this.ghosttyReady;
+    if (generation !== this.mountGeneration) return;
+    this.mountInitialized(input);
+  }
 
+  private mountInitialized(input: TerminalEmulatorRuntimeMountInput): void {
     input.host.innerHTML = "";
     this.lastSize = null;
     this.inputModeTracker.reset();
     this.emitInputModeChange();
 
-    const openExternalLink = (event: MouseEvent, uri: string) => {
-      event.preventDefault();
-      void this.callbacks.onOpenExternalUrl?.(uri);
-    };
     const terminal = new Terminal({
-      allowProposedApi: true,
       convertEol: false,
       cursorBlink: true,
       cursorStyle: "bar",
       fontFamily: resolveTerminalFontFamily(input.fontFamily),
       fontSize: resolveTerminalFontSize(input.fontSize),
-      // OSC 8 hyperlinks; without a handler xterm prompts and calls window.open().
-      linkHandler: { activate: openExternalLink },
-      lineHeight: 1.0,
-      macOptionIsMeta: true,
-      minimumContrastRatio: 1,
-      rescaleOverlappingGlyphs: true,
-      scrollbar: {
-        width: 8,
-      },
       scrollback: input.scrollback,
       theme: withOverviewRulerBorderHidden(input.theme),
     });
     const fitAddon = new FitAddon();
-    const unicode11Addon = new Unicode11Addon();
-    let webglAddon: WebglAddon | null = null;
-    let imageAddon: ImageAddon | null = null;
     terminal.loadAddon(fitAddon);
-    terminal.loadAddon(unicode11Addon);
-    terminal.loadAddon(new WebLinksAddon(openExternalLink));
-    const localFileLinkProvider = terminal.registerLinkProvider(
-      createTerminalLocalFileLinkProvider(terminal, {
-        resolveLink: async (source) => {
-          const target = await this.callbacks.onResolveLocalFileLink?.(source);
-          return target ?? null;
-        },
-        openLink: (target, disposition) => {
-          void this.callbacks.onOpenLocalFileLink?.(target, disposition);
-        },
-      }),
-    );
-    this.loadSearchAddon(terminal);
-    terminal.onWriteParsed(() => {
-      // Even a bottom viewport is an inspected location while searching. A
-      // marker follows buffer trimming; output writes remain batched normally.
+    for (const provider of createExternalLinkProviders(terminal, (url) =>
+      this.callbacks.onOpenExternalUrl?.(url),
+    )) {
+      terminal.registerLinkProvider(provider);
+    }
+    const localFileLinkProvider = createTerminalLocalFileLinkProvider(terminal, {
+      resolveLink: async (source) => {
+        const target = await this.callbacks.onResolveLocalFileLink?.(source);
+        return target ?? null;
+      },
+      openLink: (target, disposition) => {
+        void this.callbacks.onOpenLocalFileLink?.(target, disposition);
+      },
+    });
+    terminal.registerLinkProvider(localFileLinkProvider);
+    terminal.onRender(() => {
       const anchor = this.findOutputAnchor;
-      if (anchor && !anchor.isDisposed) terminal.scrollToLine(anchor.line);
-      // A parser turn may yield with submitted writes still queued. Commit
-      // callbacks identify completion; plain writes still submit back-to-back.
+      if (anchor !== undefined) terminal.scrollToLine(anchor);
       if (this.pendingWriteCommits.size === 0) this.releaseFindOutputAnchor();
     });
     terminal.onScroll(() => {
       if (this.findQuery) this.emitFindResult();
     });
-    terminal.loadAddon(new ClipboardAddon());
-    try {
-      terminal.loadAddon(new LigaturesAddon());
-    } catch {
-      // Ligatures require Font Access API or compatible environment
-    }
     terminal.open(input.host);
     this.themeBackgroundElements = this.collectThemeBackgroundElements(input);
     this.applyThemeBackground(input.theme);
-    try {
-      terminal.unicode.activeVersion = "11";
-    } catch {
-      // Ignore if unicode API isn't available in this build/runtime.
-    }
-
-    const disposeImageAddon = (): void => {
-      try {
-        imageAddon?.dispose();
-      } catch {
-        // ignore
-      }
-      imageAddon = null;
-    };
-    const disposeWebglRenderer = (): void => {
-      if (!webglAddon) {
-        return;
-      }
-      try {
-        webglAddon.dispose();
-      } catch {
-        // ignore
-      }
-      webglAddon = null;
-      disposeImageAddon();
-      // WebGL and DOM renderers can have different cell dimensions.
-      this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
-    };
-
-    // Browser xterm is a renderer only; it never replies to terminal protocol queries.
-    // Replies live on the daemon (one process boundary from the PTY) so they arrive
-    // before the foreground app exits, instead of racing back over the websocket.
-    // Re-registered after the image addon loads so our handlers stay last in the
-    // LIFO dispatch (the image addon registers its own {final:"c"} for sixel DA1).
-    const registerProtocolQuerySuppression = (): void => {
-      terminal.parser.registerCsiHandler({ final: "c" }, () => true);
-      terminal.parser.registerCsiHandler({ prefix: ">", final: "c" }, () => true);
-      terminal.parser.registerCsiHandler({ prefix: "=", final: "c" }, () => true);
-      terminal.parser.registerCsiHandler({ final: "n" }, () => true);
-      terminal.parser.registerCsiHandler({ prefix: "?", final: "n" }, () => true);
-      terminal.parser.registerCsiHandler({ final: "R" }, () => true);
-      terminal.parser.registerCsiHandler({ intermediates: "$", final: "p" }, () => true);
-      terminal.parser.registerCsiHandler(
-        { prefix: "?", intermediates: "$", final: "p" },
-        () => true,
-      );
-      for (const code of [10, 11, 12]) {
-        terminal.parser.registerOscHandler(code, (data) => data.trim() === "?");
-      }
-    };
-    registerProtocolQuerySuppression();
-
-    let webglAddonRaf: number | null = requestAnimationFrame(() => {
-      webglAddonRaf = null;
-      try {
-        disposeWebglRenderer();
-        webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => {
-          disposeWebglRenderer();
-        });
-        terminal.loadAddon(webglAddon);
-        imageAddon = new ImageAddon();
-        terminal.loadAddon(imageAddon);
-        registerProtocolQuerySuppression();
-        this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
-      } catch {
-        disposeWebglRenderer();
-      }
-    });
 
     const restoreDocumentStyles = this.applyDocumentBoundsStyles({
       root: input.root,
@@ -814,16 +799,8 @@ export class TerminalEmulatorRuntime {
       disposeFitAddon: () => {
         fitAddon.dispose();
       },
-      disposeWebglAddon: () => {
-        if (webglAddonRaf !== null) {
-          cancelAnimationFrame(webglAddonRaf);
-          webglAddonRaf = null;
-        }
-        disposeWebglRenderer();
-        disposeImageAddon();
-      },
+      disposeWebglAddon: () => {},
       disposeTerminal: () => {
-        localFileLinkProvider.dispose();
         terminal.dispose();
       },
     };
@@ -1003,16 +980,7 @@ export class TerminalEmulatorRuntime {
   }
 
   private refreshVisibleRows(): void {
-    const terminal = this.terminal;
-    if (!terminal || terminal.rows <= 0) {
-      return;
-    }
-
-    try {
-      terminal.refresh(0, terminal.rows - 1);
-    } catch {
-      // ignore
-    }
+    // Ghostty redraws after option changes; xterm required an explicit refresh.
   }
 
   private collectThemeBackgroundElements(input: {
@@ -1022,9 +990,7 @@ export class TerminalEmulatorRuntime {
     return [
       input.root,
       input.host,
-      ...Array.from(
-        input.host.querySelectorAll<HTMLElement>(".xterm, .xterm-screen, .xterm-viewport"),
-      ),
+      ...Array.from(input.host.querySelectorAll<HTMLElement>("canvas")),
     ];
   }
 
@@ -1036,6 +1002,7 @@ export class TerminalEmulatorRuntime {
   }
 
   unmount(): void {
+    this.mountGeneration += 1;
     this.releaseFindOutputAnchor();
     this.clearInFlightOutputTimeout();
     const inFlightOperation = this.inFlightOutputOperation;
@@ -1059,7 +1026,6 @@ export class TerminalEmulatorRuntime {
       window.__paseoTerminal = undefined;
     }
     this.terminal = null;
-    this.searchAddon = null;
     this.findQuery = "";
     this.findResult = { resultIndex: -1, resultCount: 0 };
     this.fitAddon = null;
@@ -1345,7 +1311,7 @@ export class TerminalEmulatorRuntime {
   }
 
   private applyViewportTouchStyles(input: { host: HTMLDivElement }): () => void {
-    const viewportElement = input.host.querySelector<HTMLElement>(".xterm-viewport");
+    const viewportElement = input.host;
 
     const previousViewportOverscroll = viewportElement?.style.overscrollBehavior ?? "";
     const previousViewportTouchAction = viewportElement?.style.touchAction ?? "";
@@ -1384,9 +1350,9 @@ export class TerminalEmulatorRuntime {
     terminal: Terminal;
   }): () => void {
     let touchScrollRemainderPx = 0;
-    const measuredLineHeight =
-      input.host.querySelector<HTMLElement>(".xterm-rows > div")?.getBoundingClientRect().height ??
-      0;
+    const measuredLineHeight = input.terminal.element
+      ? input.terminal.element.getBoundingClientRect().height / input.terminal.rows
+      : 0;
     const touchScrollLineHeightPx =
       measuredLineHeight > 0 ? measuredLineHeight : DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX;
 

@@ -8,14 +8,6 @@ import {
   type TerminalClipboard,
 } from "./terminal-emulator-runtime";
 
-vi.mock("@xterm/addon-webgl", () => ({
-  WebglAddon: class WebglAddon {
-    activate(): void {}
-    dispose(): void {}
-    onContextLoss(): void {}
-  },
-}));
-
 interface TerminalSize {
   rows: number;
   cols: number;
@@ -218,7 +210,7 @@ function expectNoForcedSameSizeClaim(input: {
 function getBrowserTerminal(): BrowserTerminal {
   const terminal = window.__paseoTerminal as BrowserTerminal | undefined;
   if (!terminal) {
-    throw new Error("Expected xterm to be exposed for browser test inspection");
+    throw new Error("Expected ghostty-web terminal to be exposed for browser test inspection");
   }
   return terminal;
 }
@@ -236,7 +228,7 @@ interface DispatchTerminalKeyInput {
 function dispatchTerminalKey(input: DispatchTerminalKeyInput): boolean {
   const textarea = input.host.querySelector<HTMLTextAreaElement>("textarea");
   if (!textarea) {
-    throw new Error("Expected xterm textarea to be mounted");
+    throw new Error("Expected terminal textarea to be mounted");
   }
   textarea.focus();
   const event = new KeyboardEvent("keydown", {
@@ -249,7 +241,7 @@ function dispatchTerminalKey(input: DispatchTerminalKeyInput): boolean {
     cancelable: true,
   });
   if (input.keyCode !== undefined) {
-    // Synthetic KeyboardEvents always report keyCode 0; xterm's fallback encoder
+    // Synthetic KeyboardEvents always report keyCode 0; the fallback encoder
     // switches on keyCode, so hardware-like events need it filled in.
     Object.defineProperty(event, "keyCode", { value: input.keyCode });
   }
@@ -276,18 +268,15 @@ async function clickTerminalLink(input: {
   col: number;
 }): Promise<void> {
   const terminal = getBrowserTerminal();
-  const screen = input.host.querySelector<HTMLElement>(".xterm-screen");
+  const screen = input.host.querySelector<HTMLElement>("canvas");
   if (!screen) {
-    throw new Error("Expected xterm screen to be mounted");
+    throw new Error("Expected terminal canvas to be mounted");
   }
   const position = {
     x: (input.col + 0.5) * (screen.clientWidth / terminal.cols),
     y: (input.row + 0.5) * (screen.clientHeight / terminal.rows),
   };
   await userEvent.hover(screen, { position });
-  await waitFor({
-    predicate: () => input.host.querySelector(".xterm-cursor-pointer") !== null,
-  });
   await userEvent.click(screen, { position });
 }
 
@@ -300,7 +289,7 @@ afterEach(() => {
 });
 
 describe("terminal emulator runtime in a real browser", () => {
-  it("passes configured scrollback to xterm", async () => {
+  it("passes configured scrollback to ghostty-web", async () => {
     await page.viewport(900, 600);
     createTerminalHost({ width: 720, height: 360, scrollback: 42_000 });
 
@@ -311,7 +300,7 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(window.__paseoTerminal?.options.scrollback).toBe(42_000);
   });
 
-  it("updates scrollback on the mounted xterm", async () => {
+  it("updates scrollback on the mounted ghostty-web terminal", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 720, height: 360, scrollback: 10_000 });
 
@@ -443,7 +432,7 @@ describe("terminal emulator runtime in a real browser", () => {
     });
   });
 
-  it("pastes through xterm's input producer", async () => {
+  it("pastes through the terminal input producer", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 720, height: 360 });
 
@@ -485,7 +474,7 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(mounted.inputs).toEqual([]);
   });
 
-  it("takes file-only paste events at xterm's input before xterm pastes empty text", async () => {
+  it("takes file-only paste events before the terminal pastes empty text", async () => {
     const mounted = createTerminalHost({ width: 720, height: 360 });
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
     const transfer = new DataTransfer();
@@ -496,7 +485,7 @@ describe("terminal emulator runtime in a real browser", () => {
       cancelable: true,
     });
 
-    mounted.host.querySelector(".xterm-helper-textarea")!.dispatchEvent(event);
+    mounted.host.querySelector("textarea")!.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(true);
     expect(mounted.filePastes).toHaveLength(1);
@@ -509,7 +498,7 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(mounted.inputs).toEqual([]);
   });
 
-  it("leaves paste events with text to xterm", async () => {
+  it("leaves paste events with text to the terminal", async () => {
     const mounted = createTerminalHost({ width: 720, height: 360 });
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
     const transfer = new DataTransfer();
@@ -517,7 +506,7 @@ describe("terminal emulator runtime in a real browser", () => {
     transfer.items.add(new File([new Uint8Array([1])], "shot.png", { type: "image/png" }));
 
     mounted.host
-      .querySelector(".xterm-helper-textarea")!
+      .querySelector("textarea")!
       .dispatchEvent(
         new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }),
       );
@@ -655,7 +644,7 @@ describe("terminal emulator runtime in a real browser", () => {
     await nextFrame();
 
     expect(mounted.inputs).toEqual([
-      "\x1b[C", // plain arrow keeps xterm's default encoding
+      "\x1b[C", // plain arrow keeps the terminal's default encoding
       "\x01", // cmd+left -> line start
       "\x05", // cmd+right -> line end
       "\x1bb", // option+left -> word back
@@ -708,7 +697,7 @@ describe("terminal emulator runtime in a real browser", () => {
     dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, altKey: true });
     await nextFrame();
 
-    // Meta+arrow is ignored by xterm; alt+arrow takes xterm's generic encoding.
+    // Meta+arrow is ignored; alt+arrow takes the generic encoding.
     expect(mounted.inputs).toEqual(["\x1b[1;3C"]);
   });
 

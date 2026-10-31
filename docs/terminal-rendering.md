@@ -1,10 +1,10 @@
 # Terminal rendering
 
-Web and Electron draw terminals with xterm.js. iOS and Android keep an `@xterm/headless` buffer in JS and draw it with the `PaseoTerminal` native view in `packages/app/modules/paseo-terminal`: CoreText on iOS, `Canvas.drawTextRun` on Android. `src/terminal/native-renderer/terminal-frame.ts` turns the visible buffer into frames, and both native views take the same props.
+Web and Electron draw terminals with ghostty-web. iOS and Android keep an `@xterm/headless` buffer in JS and draw it with the `PaseoTerminal` native view in `packages/app/modules/paseo-terminal`: CoreText on iOS, `Canvas.drawTextRun` on Android. `src/terminal/native-renderer/terminal-frame.ts` turns the visible buffer into frames, and both native views take the same props.
 
-## xterm owns the grid
+## The terminal parser owns the grid
 
-xterm decides which column every cell occupies. The native views never let text advance move a cell. Each row is shaped once, one run per font face, so Hangul jamo, ligatures, combining marks, conjuncts and fallback fonts see their neighbours. Each shaped cluster is then drawn at its first cell's column, centred in the columns it owns, and scaled down when its glyphs are wider. Cursor, selection, hit-testing and copy all use xterm's columns, so they stay correct whatever the font does.
+The terminal parser decides which column every cell occupies: ghostty-web on web and Electron, and `@xterm/headless` for native views. The native views never let text advance move a cell. Each row is shaped once, one run per font face, so Hangul jamo, ligatures, combining marks, conjuncts and fallback fonts see their neighbours. Each shaped cluster is then drawn at its first cell's column, centred in the columns it owns, and scaled down when its glyphs are wider. Cursor, selection, hit-testing and copy all use the parser's columns, so they stay correct whatever the font does.
 
 A cluster is the run of cells the shaper merged, and it is drawn once from the shaped row. Drawing part of a cluster on its own reshapes it: a half-form conjunct such as `स्ते` comes apart into `स्` with a visible virama. So colour and selection never split a cluster. A cluster whose cells differ in colour is drawn once per colour, clipped to that colour's columns.
 
