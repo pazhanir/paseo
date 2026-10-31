@@ -545,11 +545,7 @@ describe("terminal-emulator-runtime", () => {
 
     runtime.setTheme({ theme: { background: "after" } as never });
 
-    expect(terminal.options?.theme).toEqual({
-      background: "after",
-      overviewRulerBorder: "after",
-    });
-    expect(refresh).toHaveBeenCalledWith(0, 11);
+    expect(terminal.options?.theme).toEqual({ background: "after" });
   });
 
   it("updates terminal scrollback without remounting", () => {
@@ -569,7 +565,6 @@ describe("terminal-emulator-runtime", () => {
     runtime.setScrollback({ lines: 42_000 });
 
     expect(terminal.options?.scrollback).toBe(42_000);
-    expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 
   it("updates terminal font without remounting", () => {
@@ -596,7 +591,6 @@ describe("terminal-emulator-runtime", () => {
       forceRefresh: true,
       shouldClaim: false,
     });
-    expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 
   it("passively refits when the page becomes visible again", () => {

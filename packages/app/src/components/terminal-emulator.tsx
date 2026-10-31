@@ -17,8 +17,7 @@ import {
 } from "react";
 import type { DOMProps } from "expo/dom";
 import { useDOMImperativeHandle, type DOMImperativeFactory } from "expo/dom";
-import "@xterm/xterm/css/xterm.css";
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme } from "ghostty-web";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import {

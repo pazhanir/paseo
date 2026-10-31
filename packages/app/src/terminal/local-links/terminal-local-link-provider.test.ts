@@ -1,4 +1,4 @@
-import type { IBufferCell, Terminal } from "@xterm/xterm";
+import type { Terminal } from "ghostty-web";
 import { describe, expect, it, vi } from "vitest";
 import { createTerminalLocalFileLinkProvider } from "./terminal-local-link-provider";
 
@@ -45,7 +45,7 @@ describe("createTerminalLocalFileLinkProvider", () => {
     });
 
     const [link] = (await provideLinks(provider, 1)) ?? [];
-    link?.activate({ preventDefault: vi.fn(), ctrlKey: true } as unknown as MouseEvent, link.text);
+    link?.activate({ preventDefault: vi.fn(), ctrlKey: true } as unknown as MouseEvent);
 
     expect(openLink).toHaveBeenCalledWith(target, "side", expect.anything());
   });
@@ -78,7 +78,6 @@ function createTerminal(lines: string[]): Terminal {
       active: {
         length: bufferLines.length,
         getLine: (index: number) => bufferLines[index],
-        getNullCell: () => new FakeBufferCell(""),
       },
     },
   } as unknown as Terminal;
@@ -92,13 +91,8 @@ class FakeBufferLine {
     this.length = text.length;
   }
 
-  getCell(x: number, cell?: IBufferCell): IBufferCell | undefined {
-    const value = this.text[x] ?? "";
-    if (cell instanceof FakeBufferCell) {
-      cell.setValue(value);
-      return cell as unknown as IBufferCell;
-    }
-    return new FakeBufferCell(value) as unknown as IBufferCell;
+  getCell(x: number): FakeBufferCell | undefined {
+    return new FakeBufferCell(this.text[x] ?? "");
   }
 
   translateToString(): string {

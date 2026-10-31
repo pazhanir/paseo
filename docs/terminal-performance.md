@@ -12,7 +12,7 @@ pty (node-pty, forked worker process)
   → TerminalOutputCoalescer (per client stream, terminal-session-controller.ts)
   → binary ws frame (2-byte header + raw bytes)
   → client decode (daemon-client.ts) → stream router → emulator runtime
-  → xterm.write (back-to-back; xterm batches internally)
+  → ghostty-web.write (back-to-back; the renderer batches internally)
 ```
 
 Terminal frames share the daemon main event loop with all agent traffic. The `eventLoopDelay` block in the `ws_runtime_metrics` log line (every 30s in `daemon.log`) is the ground truth for "the daemon is busy" — p99/max there directly bound worst-case terminal frame delay.
@@ -29,7 +29,7 @@ Terminal frames share the daemon main event loop with all agent traffic. The `ev
 - **The input-mode tracker runs once per process boundary, not per hop.** The worker commits its authoritative tracker with xterm parsing before publishing the corresponding revision; the daemon caches current modes from ordered worker events and adoption. A replay response carries capture-time modes for its viewer; it must not overwrite the shared cache after newer live output. Apply that viewer's preamble before its buffered live bytes. Do not reintroduce a per-chunk `feed()` on the daemon main loop.
 - **Snapshot catch-up is backpressure-gated.** After more than 256 KiB of output, a stream catches up only when its transport reports more than 4 MiB queued, or exposes no backpressure reading. A draining client streams continuously. Pressure recovery sends at most 500 recent history rows plus the screen, preserving smaller explicit demands including zero; even a live-only subscription needs this resynchronization. It does not change the subscription's configured demand: later attach/reconnect restores still request the full configured history. The recent window avoids repeatedly serializing all retained history for a slow viewer.
 - **Plugin daemon sessions report IPC queue bytes.** Their virtual socket increments `bufferedAmount` before `process.send` and decrements it only in the send callback. Text and binary frames share that ordered queue, so the normal snapshot catch-up and physical high-water gates remain valid for server-side plugin SDK traffic.
-- **Client output writes are not serialized per frame.** The emulator runtime drains contiguous plain writes straight into xterm (which buffers internally). Only barrier ops (`clear`, `snapshot`, `suppressInput` writes) wait — behind a zero-length sentinel write — so resets can't interleave with in-flight output.
+- **Client output writes are not serialized per frame.** The emulator runtime drains contiguous plain writes straight into ghostty-web (which buffers internally). Only barrier ops (`clear`, `snapshot`, `suppressInput` writes) wait — behind a zero-length sentinel write — so resets can't interleave with in-flight output.
 - **Find preserves the inspected xterm viewport, including at the live bottom.** Keep its output anchor inside the existing batched write path. Serializing output to preserve a search result would add terminal latency.
 - **Retained terminal tabs in the focused workspace keep their streams.** Hidden mounted terminals continue applying output, so switching tabs does not resubscribe or request a fresh snapshot. The retained-panel LRU bounds the number of live streams; terminals in an unfocused workspace detach.
 - **Terminal size has one daemon-owned claimant.** Focus and direct interaction send a `claim`; later geometry changes from that connection send `update`. A claim transfers ownership even when the dimensions are unchanged, while an update from any other connection is ignored. This lets an owning pane follow splits and keyboard insets without allowing an idle phone or browser to steal the PTY size.
@@ -38,7 +38,7 @@ Terminal frames share the daemon main event loop with all agent traffic. The `ev
 
 - **Node-only benchmark (fast iteration, server pipeline):** `npx tsx scripts/benchmark-terminal-latency.ts`. Boots an isolated daemon (fresh `PASEO_HOME`, random port — never 6767), measures echo latency percentiles, burst jitter, and snapshot counts under ramped mock-agent load. Writes JSON to `/tmp/paseo-terminal-bench/`. Healthy numbers (2026-06): echo p50 ~2.3ms, p95 ~3.3ms, a 2MB burst fully streamed with `snap=0`.
 - **Browser perf specs (user-perceived path):** gated behind `PASEO_TERMINAL_PERF_E2E=1` —
-  `packages/app/e2e/browser/terminal-performance.spec.ts` and `packages/app/e2e/browser/terminal-keystroke-stress.spec.ts` (per-stage keydown→xterm-commit breakdown under mock-agent load). Healthy: keydown→commit p50 ~18ms under 600-key burst.
+  `packages/app/e2e/browser/terminal-performance.spec.ts` and `packages/app/e2e/browser/terminal-keystroke-stress.spec.ts` (per-stage keydown→ghostty-web commit breakdown under mock-agent load). Healthy: keydown→commit p50 ~18ms under 600-key burst.
 - **Production:** grep `daemon.log` for `ws_runtime_metrics` and read `eventLoopDelay` + `bufferedAmount`.
 - **Git pressure:** the same log line includes `git.commands` (limiter occupancy, queue age,
   queue wait, execution time, failures, timeouts, and top operations),

@@ -1,4 +1,3 @@
-import "@xterm/xterm/css/xterm.css";
 import { afterEach, expect, test } from "vitest";
 import {
   TerminalEmulatorRuntime,
